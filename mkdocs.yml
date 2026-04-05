@@ -1,0 +1,79 @@
+site_name: gsynth — Generalized Synthetic Control (Python)
+site_url: https://dwrich27.github.io/Gsynth-Python/
+repo_url: https://github.com/dwrich27/Gsynth-Python
+repo_name: dwrich27/Gsynth-Python
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - search.share
+    - content.code.annotate
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+  - md_in_html
+  - footnotes
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - User Guide:
+    - Data Format: user-guide/data-format.md
+    - Basic Estimation: user-guide/basic-estimation.md
+    - Estimators: user-guide/estimators.md
+    - Fixed Effects: user-guide/fixed-effects.md
+    - Covariates: user-guide/covariates.md
+    - Cross-Validation: user-guide/cross-validation.md
+    - Inference: user-guide/inference.md
+    - Staggered Adoption: user-guide/staggered-adoption.md
+    - Visualization: user-guide/visualization.md
+    - Effect Summary: user-guide/effect-summary.md
+  - Tutorials:
+    - Quick Start: tutorials/quickstart.md
+    - Political Economy Example: tutorials/election.md
+    - Staggered Adoption: tutorials/staggered.md
+  - API Reference:
+    - gsynth(): api/gsynth.md
+    - plot(): api/plot.md
+    - effect(): api/effect.md
+    - GsynthResult: api/result.md
+  - Changelog: changelog.md
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/dwrich27/Gsynth-Python
