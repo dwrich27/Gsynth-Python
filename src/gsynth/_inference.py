@@ -1,12 +1,13 @@
 """
 Bootstrap and jackknife inference for the Generalized Synthetic Control Method.
 
-Two main routines:
-  - ``parametric_bootstrap``: resample from estimated error distribution
-  - ``nonparametric_bootstrap``: block-resample units with replacement
-
-Both return a (nboots, T_post) array of replicated ATT estimates plus the
-overall ATT scalar for each replication.
+Three routines:
+  - ``parametric_bootstrap``: R-matching pseudo-treatment bootstrap.
+      Picks one control unit as a "fake treated" unit, resamples remaining
+      controls, runs gsynth on the pseudo-dataset.  SEs come from the
+      distribution of att_avg (which has ground truth = 0).
+  - ``nonparametric_bootstrap``: block-resample units with replacement.
+  - ``jackknife_inference``: leave-one-unit-out.
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ def _run_one_boot(
     estimator: str,
     tol: float,
     post_times: np.ndarray,
+    force: str = "unit",
 ) -> tuple[np.ndarray, float]:
     """Fit the model on one bootstrap replicate and return ATT array + scalar."""
     from ._estimators import estimate_gsynth, estimate_ife, estimate_mc
@@ -35,9 +37,9 @@ def _run_one_boot(
     elif estimator == "ife":
         res = estimate_ife(Y_boot, D_boot, ctrl_idx, treat_idx, T0_boot, r, tol)
     else:
-        res = estimate_gsynth(Y_boot, D_boot, ctrl_idx, treat_idx, T0_boot, r, tol)
+        res = estimate_gsynth(Y_boot, D_boot, ctrl_idx, treat_idx, T0_boot, r, tol, force)
 
-    # Align ATT to the global post_times grid
+    # Align ATT to the global post_times grid (event-time)
     att_full = np.full(len(post_times), np.nan)
     if len(res["att_time"]) > 0:
         for jj, t in enumerate(post_times):
@@ -51,14 +53,6 @@ def _run_one_boot(
 def parametric_bootstrap(
     Y: np.ndarray,
     D: np.ndarray,
-    alpha_hat: Optional[np.ndarray],
-    xi_hat: Optional[np.ndarray],
-    beta_hat: Optional[np.ndarray],
-    X_mat: Optional[np.ndarray],
-    F_hat: Optional[np.ndarray],
-    Lambda_hat: Optional[np.ndarray],
-    M_hat: Optional[np.ndarray],
-    sigma2: float,
     ctrl_idx: np.ndarray,
     treat_idx: np.ndarray,
     T0_vec: np.ndarray,
@@ -71,53 +65,86 @@ def parametric_bootstrap(
     force: str,
     tol: float,
     seed: Optional[int],
+    att_full: np.ndarray,
+    att_avg_full: float,
 ) -> dict:
     """
-    Two-stage parametric bootstrap.
+    Pseudo-treatment parametric bootstrap (matching R gsynth).
 
-    1.  Draw error matrix  ε* ~ N(0, σ²)
-    2.  Reconstruct  Y* = fitted + ε*
-    3.  Re-estimate the model on Y*
-    4.  Store ATT replications
+    FIX (Bug 6 / Bug 5): R's parametric bootstrap for gsynth works as follows:
+      1.  Select one control unit at random as the "fake treated" unit.
+      2.  Resample the remaining control units with replacement.
+      3.  Assign treatment indicator to the fake-treated unit using the
+          same adoption timing as the treated group (T0 = same as real T0).
+      4.  Run gsynth on this pseudo-dataset.
+      5.  Collect att_avg (ground truth = 0 for the fake unit).
+      6.  Repeat nboots times; SE = std(att_avg_boots).
+
+    Parameters
+    ----------
+    Y, D     : full panel matrices (N, T)
+    att_full : (len(post_times),) point estimates — used to center CIs
+    att_avg_full : float point estimate
     """
     rng = np.random.default_rng(seed)
     N, T = Y.shape
 
-    # Build fitted values from estimated components
-    if estimator == "mc" and M_hat is not None:
-        Y_fitted = M_hat.copy()
-    else:
-        Y_fitted = np.zeros((N, T))
-        if alpha_hat is not None:
-            Y_fitted += alpha_hat[:, None]
-        if xi_hat is not None:
-            Y_fitted += xi_hat[None, :]
-        if F_hat is not None and Lambda_hat is not None and r > 0:
-            Y_fitted += Lambda_hat @ F_hat.T
-        if beta_hat is not None and X_mat is not None:
-            for k_x in range(len(beta_hat)):
-                Y_fitted += beta_hat[k_x] * X_mat[:, :, k_x]
+    # Identify valid control units:
+    # need enough pre-treatment obs to estimate loadings
+    min_t0 = int(np.min(T0_vec)) if len(T0_vec) else T // 2
+    has_unit_fe = force in ("unit", "two-way")
+    min_obs_needed = r + (1 if has_unit_fe else 0)
+
+    # Valid controls: those with at least (r+1) non-missing obs in pre-period
+    valid_ctrl = []
+    for i in ctrl_idx:
+        pre_obs = int(np.sum(~np.isnan(Y[i, :min_t0])))
+        if pre_obs >= max(min_obs_needed, 1):
+            valid_ctrl.append(i)
+
+    if len(valid_ctrl) == 0:
+        valid_ctrl = list(ctrl_idx)
 
     att_boots = np.full((nboots, len(post_times)), np.nan)
     att_avg_boots = np.full(nboots, np.nan)
 
-    std = float(np.sqrt(max(sigma2, 1e-12)))
-
     for b in range(nboots):
-        eps = rng.normal(0.0, std, size=(N, T))
-        Y_boot = np.where(~np.isnan(Y), Y_fitted + eps, np.nan)
+        # 1. Pick one valid control as fake-treated
+        fake_tr_idx = int(rng.choice(valid_ctrl))
+
+        # 2. Resample remaining controls with replacement
+        ctrl_rest = [i for i in ctrl_idx if i != fake_tr_idx]
+        if len(ctrl_rest) == 0:
+            continue
+        ctrl_boot = rng.choice(ctrl_rest, size=len(ctrl_idx), replace=True)
+
+        # 3. Build pseudo-panel: fake_treated + resampled controls
+        n_ctrl_b = len(ctrl_boot)
+        n_boot = 1 + n_ctrl_b   # 1 fake treated + resampled controls
+
+        Y_boot = np.vstack([Y[[fake_tr_idx]], Y[ctrl_boot]])
+        D_boot_mat = np.zeros((n_boot, T))
+
+        # Assign same treatment timing as real treated units (use T0 of first treated unit)
+        t0_fake = int(T0_vec[0]) if len(T0_vec) > 0 else T // 2
+        D_boot_mat[0, t0_fake:] = 1.0   # fake treated unit
+
+        ctrl_boot_idx = np.arange(1, n_boot)
+        treat_boot_idx = np.array([0])
+        T0_boot = np.array([t0_fake])
 
         try:
-            att_full, att_avg = _run_one_boot(
-                Y_boot, D, ctrl_idx, treat_idx, T0_vec, r, lam, estimator, tol, post_times
+            att_b, att_avg_b = _run_one_boot(
+                Y_boot, D_boot_mat, ctrl_boot_idx, treat_boot_idx,
+                T0_boot, r, lam, estimator, tol, post_times, force
             )
         except Exception:
             continue
 
-        att_boots[b] = att_full
-        att_avg_boots[b] = att_avg
+        att_boots[b] = att_b
+        att_avg_boots[b] = att_avg_b
 
-    return _summarise_boots(att_boots, att_avg_boots, alpha_level)
+    return _summarise_boots(att_boots, att_avg_boots, att_full, att_avg_full, alpha_level)
 
 
 def nonparametric_bootstrap(
@@ -136,13 +163,14 @@ def nonparametric_bootstrap(
     tol: float,
     seed: Optional[int],
     cl_vec: Optional[np.ndarray],
+    att_full: np.ndarray,
+    att_avg_full: float,
 ) -> dict:
     """
     Block bootstrap at unit level (or cluster level when cl_vec is given).
 
-    Units are resampled with replacement, preserving the full time series for
-    each unit.  The treatment / control split is preserved by resampling
-    treated and control units independently.
+    Units are resampled with replacement, preserving the full time series.
+    Treated and control units are resampled independently.
     """
     rng = np.random.default_rng(seed)
     N, T = Y.shape
@@ -159,7 +187,6 @@ def nonparametric_bootstrap(
         treat_blocks = treat_idx
 
     for b in range(nboots):
-        # Resample control blocks
         if cl_vec is not None:
             ctrl_samp_blocks = rng.choice(ctrl_blocks, size=len(ctrl_blocks), replace=True)
             ctrl_samp = np.concatenate([
@@ -173,7 +200,6 @@ def nonparametric_bootstrap(
             ctrl_samp = rng.choice(ctrl_idx, size=len(ctrl_idx), replace=True)
             treat_samp = rng.choice(treat_idx, size=len(treat_idx), replace=True)
 
-        # Reconstruct boot panel
         n_ctrl_b = len(ctrl_samp)
         n_treat_b = len(treat_samp)
         n_boot = n_ctrl_b + n_treat_b
@@ -184,7 +210,6 @@ def nonparametric_bootstrap(
         ctrl_boot = np.arange(n_ctrl_b)
         treat_boot = np.arange(n_ctrl_b, n_boot)
 
-        # T0_vec for resampled treat units
         T0_boot = np.array([
             int(np.argmax(D[i] == 1)) if D[i].any() else T
             for i in treat_samp
@@ -192,17 +217,17 @@ def nonparametric_bootstrap(
         T0_boot = np.maximum(T0_boot, 1)
 
         try:
-            att_full, att_avg = _run_one_boot(
+            att_b, att_avg_b = _run_one_boot(
                 Y_boot, D_boot, ctrl_boot, treat_boot, T0_boot,
-                r, lam, estimator, tol, post_times
+                r, lam, estimator, tol, post_times, force
             )
         except Exception:
             continue
 
-        att_boots[b] = att_full
-        att_avg_boots[b] = att_avg
+        att_boots[b] = att_b
+        att_avg_boots[b] = att_avg_b
 
-    return _summarise_boots(att_boots, att_avg_boots, alpha_level)
+    return _summarise_boots(att_boots, att_avg_boots, att_full, att_avg_full, alpha_level)
 
 
 def jackknife_inference(
@@ -231,31 +256,35 @@ def jackknife_inference(
     att_avg_jacks = np.full(n_jack, np.nan)
 
     for b, drop in enumerate(all_idx):
-        keep = all_idx[all_idx != drop]
         ctrl_j = np.array([i for i in ctrl_idx if i != drop])
         treat_j = np.array([i for i in treat_idx if i != drop])
         if len(treat_j) == 0 or len(ctrl_j) == 0:
             continue
 
-        T0_j = T0_vec[[i for i, ii in enumerate(treat_idx) if ii != drop]]
+        T0_j = T0_vec[[kk for kk, ii in enumerate(treat_idx) if ii != drop]]
 
-        Y_j = Y[keep]
-        D_j = D[keep]
-        ctrl_jj = np.where(np.isin(keep, ctrl_j))[0]
-        treat_jj = np.where(np.isin(keep, treat_j))[0]
+        keep = np.concatenate([ctrl_j, treat_j])
+        # Re-index into compressed panel
+        orig_to_new = {orig: new for new, orig in enumerate(sorted(keep))}
+        ctrl_jj = np.array([orig_to_new[i] for i in ctrl_j])
+        treat_jj = np.array([orig_to_new[i] for i in treat_j])
+
+        Y_j = Y[sorted(keep)]
+        D_j = D[sorted(keep)]
 
         try:
-            att_full_j, att_avg_j = _run_one_boot(
-                Y_j, D_j, ctrl_jj, treat_jj, T0_j, r, lam, estimator, tol, post_times
+            att_b, att_avg_b = _run_one_boot(
+                Y_j, D_j, ctrl_jj, treat_jj, T0_j,
+                r, lam, estimator, tol, post_times, force
             )
         except Exception:
             continue
 
-        att_jacks[b] = att_full_j
-        att_avg_jacks[b] = att_avg_j
+        att_jacks[b] = att_b
+        att_avg_jacks[b] = att_avg_b
 
     # Jackknife SE = sqrt((n-1)/n * sum((x_i - x_bar)^2))
-    n_valid = np.sum(~np.isnan(att_avg_jacks))
+    n_valid = int(np.sum(~np.isnan(att_avg_jacks)))
     jk_se_avg = float(np.sqrt(
         (n_valid - 1) / n_valid * np.nanvar(att_avg_jacks)
     )) if n_valid > 1 else 0.0
@@ -266,7 +295,7 @@ def jackknife_inference(
         for j in range(len(post_times))
     ])
 
-    z = float(np.abs(np.quantile(np.random.default_rng(0).normal(size=10000), 1 - alpha_level / 2)))
+    z = _z_score(alpha_level)
 
     return {
         "att_se": jk_se,
@@ -279,27 +308,37 @@ def jackknife_inference(
     }
 
 
+def _z_score(alpha_level: float) -> float:
+    """Normal quantile for (1 - alpha/2) CI via bisection (no scipy)."""
+    hi = 1.0 - alpha_level / 2
+    # Use large sample from standard normal to get empirical quantile
+    rng = np.random.default_rng(42)
+    return float(np.quantile(np.abs(rng.standard_normal(100_000)), hi))
+
+
 def _summarise_boots(
     att_boots: np.ndarray,
     att_avg_boots: np.ndarray,
+    att_full: np.ndarray,
+    att_avg_full: float,
     alpha_level: float,
 ) -> dict:
-    """Compute SE and CI from bootstrap replications."""
-    hi = 1.0 - alpha_level / 2
-    z = float(np.quantile(np.abs(np.random.default_rng(99).standard_normal(50000)), hi))
+    """
+    Compute SE and CI from bootstrap replications.
 
-    # Per-period
+    CIs use normal approximation centred on point estimates (matching R).
+    """
+    z = _z_score(alpha_level)
+
+    # Per-period SE
     att_se = np.nanstd(att_boots, axis=0, ddof=1)
-    # Use normal-approximation CI (matching R gsynth behaviour)
-    att_mean = np.nanmean(att_boots, axis=0)  # use boot mean for CI center
-    att_ci_lo = att_mean - z * att_se
-    att_ci_hi = att_mean + z * att_se
+    att_ci_lo = att_full - z * att_se
+    att_ci_hi = att_full + z * att_se
 
-    # Overall
+    # Overall SE
     se_avg = float(np.nanstd(att_avg_boots, ddof=1))
-    avg_mean = float(np.nanmean(att_avg_boots))
-    ci_lo_avg = avg_mean - z * se_avg
-    ci_hi_avg = avg_mean + z * se_avg
+    ci_lo_avg = att_avg_full - z * se_avg
+    ci_hi_avg = att_avg_full + z * se_avg
 
     return {
         "att_se": att_se,

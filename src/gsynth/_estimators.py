@@ -28,6 +28,62 @@ def _nan_obs_mask(Y: np.ndarray) -> np.ndarray:
     return ~np.isnan(Y)
 
 
+def _compute_att_by_event_time(
+    Y: np.ndarray,
+    Y_ct: np.ndarray,
+    D: np.ndarray,
+    treat_idx: np.ndarray,
+    T0_vec: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """
+    Compute period-by-period ATT using **relative event-time** (matching R gsynth).
+
+    Event-time 0 = first treatment period, -1 = one period before treatment, etc.
+    All observed periods for treated units are included (pre and post).
+
+    att_avg is the treatment-cell weighted average:
+        att_avg = sum(gap[i,j] for (i,j) where D[i,j]=1) / sum(D[i,j]=1)
+    matching R: ``att.avg = sum(eff * D) / sum(D)``.
+
+    Returns
+    -------
+    att       : (n_event_times,) per-event-time average treatment effect
+    att_time  : (n_event_times,) corresponding event-time values (integers)
+    att_avg   : float, treatment-weighted overall ATT
+    """
+    T = Y.shape[1]
+    N_tr = len(treat_idx)
+
+    # Build dict: event_time -> (sum_gaps, count)
+    et_sums: dict[int, float] = {}
+    et_counts: dict[int, int] = {}
+
+    total_eff = 0.0
+    total_D = 0
+
+    for k in range(N_tr):
+        i = treat_idx[k]
+        t0 = int(T0_vec[k])
+        for j in range(T):
+            if np.isnan(Y[i, j]):
+                continue
+            et = j - t0   # event-time: 0 = first treatment period
+            gap = float(Y[i, j] - Y_ct[k, j])
+            et_sums[et] = et_sums.get(et, 0.0) + gap
+            et_counts[et] = et_counts.get(et, 0) + 1
+            # att_avg only over treated cells
+            if D[i, j] == 1:
+                total_eff += gap
+                total_D += 1
+
+    event_times_sorted = sorted(et_sums.keys())
+    att = np.array([et_sums[et] / et_counts[et] for et in event_times_sorted])
+    att_time = np.array(event_times_sorted, dtype=int)
+    att_avg = total_eff / total_D if total_D > 0 else 0.0
+
+    return att, att_time, att_avg
+
+
 # ---------------------------------------------------------------------------
 # Interactive Fixed Effects (ALS) — used by both "ife" and "gsynth" modes
 # ---------------------------------------------------------------------------
@@ -127,6 +183,7 @@ def estimate_gsynth(
     T0_vec: np.ndarray,
     r: int,
     tol: float = 1e-4,
+    force: str = "unit",
 ) -> dict:
     """
     Generalized Synthetic Control estimator.
@@ -134,6 +191,14 @@ def estimate_gsynth(
     Factors are estimated **only** from control units.  Treated units'
     factor loadings are recovered by projecting their pre-treatment
     outcomes onto the estimated factor space.
+
+    Bug fixes vs original:
+    - ``att_avg`` is now treatment-cell weighted (matches R ``sum(eff*D)/sum(D)``).
+    - ``att`` / ``att_time`` use relative **event-time** (0 = first treatment
+      period), not calendar time, and include pre-treatment periods.
+    - When ``force`` includes unit fixed effects the factor matrix is augmented
+      with a constant column so treated-unit FEs are estimated jointly with
+      loadings from pre-treatment data (matching R ``fect_nevertreated``).
 
     Parameters
     ----------
@@ -143,10 +208,11 @@ def estimate_gsynth(
     treat_idx: indices of treated units in Y
     T0_vec   : pre-treatment period count per treated unit
     r        : number of factors
+    force    : fixed-effects specification (passed in to determine augmentation)
 
     Returns
     -------
-    dict with keys: F, Lambda, Y_ct, att, att_avg, residuals, mse
+    dict with keys: F, Lambda, Y_ct, att, att_time, att_avg, residuals, mse
     """
     N, T = Y.shape
     Y_ctrl = Y[ctrl_idx]                         # (N_co, T)
@@ -154,73 +220,78 @@ def estimate_gsynth(
 
     F, Lambda_ctrl, resid_ctrl, mse = _ife_als(Y_ctrl, obs_ctrl, r, tol)
 
-    # Estimate factor loadings for treated units using pre-treatment window
-    Lambda_treat = np.zeros((len(treat_idx), max(r, 1)))
-    if r > 0:
+    # ---------------------------------------------------------------
+    # Estimate factor loadings for treated units from pre-treatment data.
+    #
+    # FIX (Bug 3): When force includes unit FE, augment F with a constant
+    # column so that the treated unit's unit FE is estimated jointly with
+    # factor loadings from pre-treatment data — matching R's:
+    #   F.hat <- cbind(F.hat, rep(1, TT))   # when force %in% c(1, 3)
+    #   lambda.tr <- solve(F.hat.pre' @ F.hat.pre) @ F.hat.pre' @ U.tr.pre
+    # ---------------------------------------------------------------
+    has_unit_fe = force in ("unit", "two-way")
+
+    Lambda_treat = np.zeros((len(treat_idx), r))
+    alpha_treat  = np.zeros(len(treat_idx))    # treated unit FEs (if applicable)
+
+    if r > 0 or has_unit_fe:
         for k, i in enumerate(treat_idx):
             t0 = int(T0_vec[k])
-            if t0 < r:
-                # Fallback: use all available pre-treatment
-                t0 = T
-            F_pre = F[:t0]                        # (T0, r)
-            Y_pre = Y[i, :t0]                     # (T0,)
-            obs_pre = ~np.isnan(Y_pre)
-            if obs_pre.sum() >= r:
-                Lambda_treat[k] = np.linalg.lstsq(
-                    F_pre[obs_pre], Y_pre[obs_pre], rcond=None
-                )[0]
+            # Build augmented factor matrix [F | 1] if unit FE present
+            if has_unit_fe and r > 0:
+                ones_col = np.ones((T, 1))
+                F_aug = np.hstack([F, ones_col])     # (T, r+1)
+            elif has_unit_fe:
+                F_aug = np.ones((T, 1))              # (T, 1) — only unit FE
+            else:
+                F_aug = F                            # (T, r)
 
-    # Counterfactuals: Y_ct_i = Lambda_i @ F.T
+            r_aug = F_aug.shape[1]
+
+            F_pre = F_aug[:t0]                       # (T0, r_aug)
+            Y_pre = Y[i, :t0]                        # (T0,)
+            obs_pre = ~np.isnan(Y_pre)
+            if obs_pre.sum() < r_aug:
+                continue
+
+            coef = np.linalg.lstsq(F_pre[obs_pre], Y_pre[obs_pre], rcond=None)[0]
+
+            if r > 0:
+                Lambda_treat[k] = coef[:r]
+            if has_unit_fe:
+                alpha_treat[k] = float(coef[-1])
+
+    # ---------------------------------------------------------------
+    # Counterfactuals: Y_ct_i = Lambda_i @ F.T  (+ alpha_i if unit FE)
+    # ---------------------------------------------------------------
     Y_ct = np.zeros((len(treat_idx), T))
     if r > 0:
-        Y_ct = Lambda_treat[:, :r] @ F.T          # (N_tr, T)
+        Y_ct = Lambda_treat @ F.T                    # (N_tr, T)
+    if has_unit_fe:
+        Y_ct += alpha_treat[:, None]                 # broadcast unit FEs
 
-    # Treatment effect: gap between observed and counterfactual
-    # Use only post-treatment periods (D==1)
-    att_unit = []
-
-    for k, i in enumerate(treat_idx):
-        t0 = int(T0_vec[k])
-        obs_i = ~np.isnan(Y[i])
-        gaps = Y[i] - Y_ct[k]
-        post_gaps = []
-        for j in range(T):
-            if D[i, j] == 1 and obs_i[j]:
-                post_gaps.append((j, gaps[j]))
-        att_unit.append([g for _, g in post_gaps])
-
-    # Average ATT across treated units, by calendar time
-    post_times = sorted(
-        {j for k, i in enumerate(treat_idx) for j in range(T) if D[i, j] == 1}
+    # ---------------------------------------------------------------
+    # FIX (Bugs 1 & 2): ATT by event-time; att_avg treatment-cell weighted
+    # ---------------------------------------------------------------
+    att, att_time, att_avg = _compute_att_by_event_time(
+        Y, Y_ct, D, treat_idx, T0_vec
     )
-    att = np.zeros(len(post_times))
-    att_counts = np.zeros(len(post_times))
-    for k, i in enumerate(treat_idx):
-        for jj, j in enumerate(post_times):
-            if D[i, j] == 1 and not np.isnan(Y[i, j]):
-                att[jj] += Y[i, j] - Y_ct[k, j]
-                att_counts[jj] += 1
-    nz = att_counts > 0
-    att[nz] /= att_counts[nz]
-
-    att_avg = float(att[nz].mean()) if nz.any() else 0.0
 
     # Build full Lambda (all units)
     Lambda = np.zeros((N, max(r, 1)))
     if r > 0:
         Lambda[ctrl_idx] = Lambda_ctrl
-        Lambda[treat_idx] = Lambda_treat[:, :r]
+        Lambda[treat_idx] = Lambda_treat
 
     return {
         "F": F,
         "Lambda": Lambda,
         "Lambda_ctrl": Lambda_ctrl,
-        "Lambda_treat": Lambda_treat[:, :r] if r > 0 else Lambda_treat,
+        "Lambda_treat": Lambda_treat,
         "Y_ct": Y_ct,
         "att": att,
-        "att_time": np.array(post_times),
+        "att_time": att_time,
         "att_avg": att_avg,
-        "att_unit": att_unit,
         "residuals": resid_ctrl,
         "mse": mse,
     }
@@ -244,6 +315,8 @@ def estimate_ife(
 
     Treated units' pre-treatment data is used to estimate factors jointly.
     Post-treatment counterfactuals are imputed from the estimated model.
+
+    FIX: att_avg is now treatment-cell weighted; att uses event-time.
     """
     N, T = Y.shape
 
@@ -260,20 +333,10 @@ def estimate_ife(
     # Counterfactuals: Y_ct = Lambda @ F.T
     Y_ct = Lambda[treat_idx] @ F.T            # (N_tr, T)
 
-    # ATT
-    post_times = sorted(
-        {j for i in treat_idx for j in range(T) if D[i, j] == 1}
+    # FIX (Bugs 1 & 2): event-time ATT, treatment-cell weighted avg
+    att, att_time, att_avg = _compute_att_by_event_time(
+        Y, Y_ct, D, treat_idx, T0_vec
     )
-    att = np.zeros(len(post_times))
-    att_counts = np.zeros(len(post_times))
-    for k, i in enumerate(treat_idx):
-        for jj, j in enumerate(post_times):
-            if D[i, j] == 1 and not np.isnan(Y[i, j]):
-                att[jj] += Y[i, j] - Y_ct[k, j]
-                att_counts[jj] += 1
-    nz = att_counts > 0
-    att[nz] /= att_counts[nz]
-    att_avg = float(att[nz].mean()) if nz.any() else 0.0
 
     return {
         "F": F,
@@ -282,7 +345,7 @@ def estimate_ife(
         "Lambda_treat": Lambda[treat_idx],
         "Y_ct": Y_ct,
         "att": att,
-        "att_time": np.array(post_times),
+        "att_time": att_time,
         "att_avg": att_avg,
         "residuals": resid,
         "mse": mse,
@@ -350,6 +413,8 @@ def estimate_mc(
     Treats post-treatment outcomes for treated units as *missing*, then
     recovers them via nuclear-norm regularised matrix completion.
 
+    FIX: att_avg is now treatment-cell weighted; att uses event-time.
+
     Parameters
     ----------
     Y   : (N, T) demeaned outcome
@@ -369,20 +434,10 @@ def estimate_mc(
     # Counterfactuals for treated units
     Y_ct = M_complete[treat_idx]       # (N_tr, T)
 
-    # ATT
-    post_times = sorted(
-        {j for i in treat_idx for j in range(T) if D[i, j] == 1}
+    # FIX (Bugs 1 & 2): event-time ATT, treatment-cell weighted avg
+    att, att_time, att_avg = _compute_att_by_event_time(
+        Y, Y_ct, D, treat_idx, T0_vec
     )
-    att = np.zeros(len(post_times))
-    att_counts = np.zeros(len(post_times))
-    for k, i in enumerate(treat_idx):
-        for jj, j in enumerate(post_times):
-            if D[i, j] == 1 and not np.isnan(Y[i, j]):
-                att[jj] += Y[i, j] - Y_ct[k, j]
-                att_counts[jj] += 1
-    nz = att_counts > 0
-    att[nz] /= att_counts[nz]
-    att_avg = float(att[nz].mean()) if nz.any() else 0.0
 
     # MSE on observed control cells
     resid = np.where(obs_mask, Y - M_complete, np.nan)
@@ -401,7 +456,7 @@ def estimate_mc(
         "Lambda": None,
         "Y_ct": Y_ct,
         "att": att,
-        "att_time": np.array(post_times),
+        "att_time": att_time,
         "att_avg": att_avg,
         "residuals": resid,
         "mse": mse,

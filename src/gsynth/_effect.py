@@ -67,11 +67,12 @@ def effect(
         n_units = result.N_tr
 
     # --- filter by time period ---
+    # Default: post-treatment periods only (att_time >= 0 in event-time)
     if period is not None:
         p_start, p_end = period[0], period[1]
         mask = (att_time >= p_start) & (att_time <= p_end)
     else:
-        mask = np.ones(len(att_time), dtype=bool)
+        mask = att_time >= 0
 
     att_sel   = att[mask]
     times_sel = att_time[mask]

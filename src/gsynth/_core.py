@@ -14,7 +14,7 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
-from ._cv import build_lambda_seq, cv_factor_number, cv_lambda
+from ._cv import build_lambda_seq, cv_factor_number, cv_factor_number_gsynth, cv_lambda
 from ._data import demean_panel, parse_panel, partial_out_covariates
 from ._estimators import estimate_gsynth, estimate_ife, estimate_mc
 from ._inference import (
@@ -202,19 +202,14 @@ def gsynth(
     # 2. Normalise (optional)
     # ------------------------------------------------------------------
     Y_scale, Y_center = 1.0, 0.0
-    X_scale = None
     if normalize:
         obs_vals = Y_mat[~np.isnan(Y_mat)]
         Y_center = float(obs_vals.mean())
         Y_scale  = float(obs_vals.std()) or 1.0
         Y_mat    = (Y_mat - Y_center) / Y_scale
         if X_mat is not None:
-            K = X_mat.shape[2]
-            X_scale = np.zeros(K)
-            for kk in range(K):
-                obs_x = X_mat[:, :, kk][~np.isnan(X_mat[:, :, kk])]
-                X_scale[kk] = float(obs_x.std()) or 1.0
-                X_mat[:, :, kk] /= X_scale[kk]
+            # R divides X by sd(Y), not sd(X) — match that behaviour
+            X_mat = X_mat / Y_scale
 
     # ------------------------------------------------------------------
     # 3. Demean / partial out fixed effects
@@ -239,12 +234,29 @@ def gsynth(
     else:
         r_candidates = list(range(0, 6)) if (CV and r == 0) else [int(r)]
 
+    # R constraint: r <= min_T0 - 2 with unit FE, r <= min_T0 - 1 without
+    if len(T0_vec) > 0:
+        min_t0_units = int(np.min(T0_vec))
+        fe_penalty = 2 if force in ("unit", "two-way") else 1
+        r_max_allowed = max(0, min_t0_units - fe_penalty)
+        r_candidates = [rv for rv in r_candidates if rv <= r_max_allowed]
+        if not r_candidates:
+            r_candidates = [0]
+
     r_cv_scores  = None
     lam_cv_scores = None
     lam_opt      = None
     r_opt        = r_candidates[0]
 
-    if estimator in ("gsynth", "ife"):
+    if estimator == "gsynth":
+        if CV and len(r_candidates) > 1:
+            r_opt, r_cv_scores = cv_factor_number_gsynth(
+                Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec,
+                r_candidates, force=force, tol=tol, rng=rng,
+            )
+        else:
+            r_opt = r_candidates[0]
+    elif estimator == "ife":
         if CV and len(r_candidates) > 1:
             Y_ctrl = Y_dem[ctrl_idx]
             r_opt, r_cv_scores = cv_factor_number(
@@ -272,7 +284,7 @@ def gsynth(
     # 6. Final estimation
     # ------------------------------------------------------------------
     if estimator == "gsynth":
-        est = estimate_gsynth(Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec, r_opt, tol)
+        est = estimate_gsynth(Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec, r_opt, tol, force)
     elif estimator == "ife":
         est = estimate_ife(Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec, r_opt, tol)
     else:  # mc
@@ -301,22 +313,28 @@ def gsynth(
     # ------------------------------------------------------------------
     boot_out = None
     if se:
+        # R defaults: gsynth → parametric; ife and mc → nonparametric
         if inference is None:
-            inference = "parametric" if len(treat_idx) < 40 else "nonparametric"
+            if estimator == "gsynth":
+                inference = "parametric"
+            else:
+                inference = "nonparametric"
         inference_lc = inference.lower()
+
+        post_times = est["att_time"]
 
         if inference_lc == "jackknife":
             boot_out = jackknife_inference(
                 Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec,
                 r_opt, lam_opt, estimator, alpha,
-                est["att_time"], force, tol,
+                post_times, force, tol,
                 att_raw, att_avg_raw,
             )
         elif inference_lc == "parametric":
-            if estimator == "mc":
+            if estimator != "gsynth":
                 warnings.warn(
-                    "Parametric bootstrap is not recommended for the MC estimator. "
-                    "Using nonparametric bootstrap instead.",
+                    "Parametric bootstrap is only defined for the gsynth estimator. "
+                    "Switching to nonparametric bootstrap.",
                     stacklevel=2,
                 )
                 inference_lc = "nonparametric"
@@ -324,20 +342,19 @@ def gsynth(
         if inference_lc == "parametric":
             boot_out = parametric_bootstrap(
                 Y_dem, D_mat,
-                alpha_hat, xi_hat, beta_hat, X_mat,
-                est.get("F"), est.get("Lambda"), est.get("M"),
-                sigma2,
                 ctrl_idx, treat_idx, T0_vec,
                 r_opt, lam_opt, estimator,
-                nboots, alpha, est["att_time"], force, tol, seed,
+                nboots, alpha, post_times, force, tol, seed,
+                att_raw, att_avg_raw,
             )
         elif inference_lc == "nonparametric":
             boot_out = nonparametric_bootstrap(
                 Y_dem, D_mat,
                 ctrl_idx, treat_idx, T0_vec,
                 r_opt, lam_opt, estimator,
-                nboots, alpha, est["att_time"], force, tol, seed,
+                nboots, alpha, post_times, force, tol, seed,
                 cl_vec,
+                att_raw, att_avg_raw,
             )
 
         if boot_out and normalize:

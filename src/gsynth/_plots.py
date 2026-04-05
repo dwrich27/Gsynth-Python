@@ -154,13 +154,19 @@ def _plot_gap(result, **kw) -> "Figure":
     fig, ax = plt.subplots(figsize=kw["figsize"])
     _apply_theme(ax, kw["theme_bw"])
 
-    times = result.att_time
+    times = result.att_time   # event-time; negative = pre-treatment
     att   = result.att
     has_se = result.att_se is not None
 
-    # Shade post-treatment
+    # Shade post-treatment region (event-time >= 0)
     if kw["shade_post"] and len(times) > 0:
-        ax.axvspan(times[0] - 0.5, times[-1] + 0.5, color="#EEEEEE", zorder=0)
+        post_min = 0.0
+        post_max = float(times.max()) + 0.5
+        if post_max > post_min:
+            ax.axvspan(post_min - 0.5, post_max, color="#EEEEEE", zorder=0)
+
+    # Vertical line at treatment onset
+    ax.axvline(0, color="#888888", linewidth=0.8, linestyle=":", zorder=1)
 
     # Zero line
     ax.axhline(0, color=_COL_ZERO, linewidth=0.8, linestyle="--", zorder=1)
@@ -172,19 +178,11 @@ def _plot_gap(result, **kw) -> "Figure":
             color=_COL_BAND, alpha=kw["alpha"], zorder=2, label="95% CI"
         )
 
-    # ATT line
+    # ATT line (covers all event-time periods including pre-treatment)
     ax.plot(times, att, color=_COL_TREAT, linewidth=2, marker="o", ms=4,
             zorder=3, label="ATT")
 
-    # Add pre-treatment zero reference
-    all_times = result.times
-    pre_mask = ~np.isin(all_times, times)
-    pre_times = all_times[pre_mask]
-    if len(pre_times):
-        ax.plot(pre_times, np.zeros(len(pre_times)), color=_COL_TREAT,
-                linewidth=2, marker="o", ms=4, zorder=3)
-
-    ax.set_xlabel(kw["xlab"] or str(result.index[1] if result.index else "Time"))
+    ax.set_xlabel(kw["xlab"] or "Event Time (periods since treatment)")
     ax.set_ylabel(kw["ylab"] or "Average Treatment Effect")
     ax.set_title(kw["main"] or "Period-by-Period ATT")
     if kw["xlim"]:
