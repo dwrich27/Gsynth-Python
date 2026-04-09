@@ -173,18 +173,22 @@ result.treat_units      # ndarray — treated unit identifiers
 The `gsynth` estimator fits an Interactive Fixed Effects (IFE) model:
 
 ```
-Y_it = α_i + λ_i · F_t + D_it · τ_it + β · X_it + ε_it
+Y_it = α_i + ξ_t + λ_i · F_t + D_it · τ_it + β · X_it + ε_it
 ```
 
-where **α_i** are unit fixed effects, **λ_i** are unit-specific factor loadings, **F_t** are latent time factors, and **τ_it** is the heterogeneous treatment effect.
+where **α_i** are unit fixed effects, **ξ_t** are time fixed effects, **λ_i** are unit-specific factor loadings, **F_t** are latent time factors, and **τ_it** is the heterogeneous treatment effect.
 
-**Estimation steps:**
-1. Partial out fixed effects (demean by unit, time, or both)
-2. Partial out time-varying covariates X via OLS on control units
-3. Estimate latent factors F from control units via ALS
-4. Project treated units' pre-treatment data onto the factor space to recover λ_i
-5. Impute counterfactuals: Ŷ(0)_it = λ̂_i · F̂_t
-6. Compute ATT: τ̂_it = Y_it − Ŷ(0)_it  (post-treatment)
+**Estimation steps (gsynth estimator):**
+1. Cross-validate to select the number of factors `r`
+2. **Joint alternating loop** (when covariates are present):
+   - Given `β`, demean `Y − X@β` to update unit/time fixed effects
+   - ALS on demeaned control outcomes to estimate `F`, `Λ`
+   - Update `β` via OLS on all D=0 residuals `(Y − FE) − Λ@F'`
+   - Repeat until convergence
+3. Without covariates: demean `Y` and run ALS on control units directly
+4. Project treated units' pre-treatment data onto the factor space to recover `λ_i`
+5. Impute counterfactuals: `Ŷ(0)_it = α̂_i + ξ̂_t + λ̂_i · F̂_t + β̂ · X_it`
+6. Compute ATT: `τ̂_it = Y_it − Ŷ(0)_it` (post-treatment, event-time indexed)
 
 ---
 

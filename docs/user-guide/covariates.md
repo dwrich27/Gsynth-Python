@@ -20,16 +20,35 @@ The column names `X1`, `X2`, etc. must exist in `data` and be numeric.
 
 ---
 
-## How Covariates Are Used: Partialling Out
+## How Covariates Are Used: Joint Alternating Estimation
 
-gsynth removes the linear covariate contribution from the outcome before estimating the interactive fixed effects model. The procedure is:
+The IFE model with covariates is:
 
-1. **OLS on control units** (pre-treatment period): regress `Y` on `X` (and the FE structure implied by `force`) using only control-unit observations.
-2. **Estimate `beta`**: the OLS coefficient vector `beta` is stored in `result.beta`.
-3. **Partial out**: the adjusted outcome `Y_tilde = Y - beta * X` is used for all subsequent IFE estimation (factors, loadings, counterfactuals).
-4. **Counterfactual**: the imputed Y(0) adds back the covariate contribution: `Y_ct = alpha_i + lambda_i @ F_t + beta @ X_it`.
+```
+Y_it = α_i + ξ_t + λ_i · F_t + β · X_it + ε_it
+```
 
-This approach avoids conflating covariate effects with treatment effects in the factor estimation step.
+Estimating `β` and the factor structure jointly is important: when `X` is correlated with the latent factors (which is common — both vary by unit and time), a naive sequential approach absorbs covariate variation into the fixed effects during demeaning, biasing `β` toward zero.
+
+gsynth uses the same joint alternating loop as R `fect`:
+
+1. **Initialize** `β = 0`.
+2. **Demean** `Y − X@β` to remove unit and time fixed effects, yielding `Ỹ`.
+3. **ALS** on `Ỹ` for control units to estimate latent factors `F` and loadings `Λ`.
+4. **Update `β`** via OLS using all D=0 residuals:
+   `(Ỹ + X@β) − Λ@F'` regressed on `X` (D=0 cells).
+5. **Repeat** steps 2–4 until `‖Δβ‖ < tol`.
+
+The **D=0 mask** in step 4 covers control units for all periods and treated units for their pre-treatment periods. Using the full D=0 set (not just control units) avoids bias when covariate variation in the control group does not span the full covariate space.
+
+After convergence, `result.beta` holds the final `β`, and the counterfactual is:
+
+```
+Ŷ(0)_it  =  α̂_i  +  ξ̂_t  +  λ̂_i · F̂_t  +  β̂ · X_it
+```
+
+!!! note "Estimator differences"
+    The joint loop applies to the `gsynth` estimator. For `ife` and `mc`, `β` is estimated via a single sequential OLS on all D=0 observations (no iteration), which is the standard approach for those estimators.
 
 ---
 
