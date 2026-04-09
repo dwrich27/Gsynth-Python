@@ -1156,6 +1156,34 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#020-2026-04-09" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2.0 (2026-04-09)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.2.0 (2026-04-09)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#010-2026-04-05" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1201,6 +1229,34 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#020-2026-04-09" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2.0 (2026-04-09)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0.2.0 (2026-04-09)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#010-2026-04-05" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1232,6 +1288,57 @@
 
 
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
+<h2 id="020-2026-04-09">0.2.0 (2026-04-09)<a class="headerlink" href="#020-2026-04-09" title="Permanent link">&para;</a></h2>
+<h3 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h3>
+<p><strong>Covariate estimation — joint alternating loop (major fix)</strong></p>
+<p>The previous release estimated <code>beta</code> sequentially: demean <code>Y</code> (assuming <code>beta=0</code>), then run OLS on demeaned <code>Y</code> using control-unit observations only. This approach is biased when covariates <code>X</code> are correlated with the latent factors, because the unit/time fixed effects absorb covariate variation during the demeaning step, leaving little signal for OLS to recover.</p>
+<p>The fix implements the same joint alternating loop used by R <code>fect</code>:</p>
+<ol>
+<li>Given the current <code>beta</code>, demean <code>Y − X @ beta</code> to obtain updated unit and time fixed effects.</li>
+<li>Run ALS on the demeaned control outcomes to estimate factors <code>F</code> and loadings <code>Λ</code>.</li>
+<li>Update <code>beta</code> via OLS on all D=0 residuals: <code>(Y − FE) − Λ @ F'</code>.</li>
+<li>Repeat until convergence.</li>
+</ol>
+<p>This joint loop ensures that fixed effects, factors, and <code>beta</code> are estimated consistently. On the validation dataset (N=20, T=30, N_tr=5, r=2, true ATT=2.0):</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Before fix</th>
+<th>After fix</th>
+<th>R gsynth</th>
+<th>True</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>att_avg</code></td>
+<td>1.927</td>
+<td><strong>2.004</strong></td>
+<td>2.003</td>
+<td>2.000</td>
+</tr>
+<tr>
+<td><code>beta_X1</code></td>
+<td>0.407</td>
+<td><strong>0.617</strong></td>
+<td>0.650</td>
+<td>0.600</td>
+</tr>
+<tr>
+<td><code>beta_X2</code></td>
+<td>−0.061</td>
+<td><strong>−0.373</strong></td>
+<td>−0.355</td>
+<td>−0.400</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Covariate observation set — all D=0 cells (moderate fix)</strong></p>
+<p>For <code>ife</code> and <code>mc</code> estimators, <code>partial_out_covariates</code> previously used only control-unit observations for the OLS. It now uses all D=0 observations (control units for all periods + treated units for pre-treatment periods), matching R fect's behaviour.</p>
+<p><strong>Cross-validation methodology (moderate fix)</strong></p>
+<p>For both <code>gsynth</code> and <code>ife</code> estimators, CV now uses k-fold hold-out on control-unit cells (matching R fect) rather than leave-one-out on treated pre-treatment data. Both methods selected the same <code>r*</code> on the validation dataset; on real data they may disagree.</p>
+<hr />
 <h2 id="010-2026-04-05">0.1.0 (2026-04-05)<a class="headerlink" href="#010-2026-04-05" title="Permanent link">&para;</a></h2>
 <p>Initial release — Python port of R gsynth implementing:</p>
 <ul>
