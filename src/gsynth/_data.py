@@ -182,7 +182,12 @@ def partial_out_covariates(
     ctrl_idx: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Partial out time-varying covariates from Y using OLS on control units.
+    Partial out time-varying covariates from Y using OLS on all D=0 observations.
+
+    Observations where D=0 includes control units for all periods and treated
+    units for pre-treatment periods.  Using the full set of D=0 observations
+    matches R fect's beta estimation and avoids bias when control-unit
+    covariate variation does not fully span the covariate space.
 
     Parameters
     ----------
@@ -197,12 +202,14 @@ def partial_out_covariates(
     """
     N, T, K = X_mat.shape
 
-    # Stack control observations
+    # Stack all D=0 observations (control all periods + treated pre-treatment)
     y_stack = []
     x_stack = []
-    for i in ctrl_idx:
+    for i in range(N):
         for j in range(T):
-            if not np.isnan(Y_dem[i, j]) and not np.any(np.isnan(X_mat[i, j])):
+            if (D_mat[i, j] == 0
+                    and not np.isnan(Y_dem[i, j])
+                    and not np.any(np.isnan(X_mat[i, j]))):
                 y_stack.append(Y_dem[i, j])
                 x_stack.append(X_mat[i, j])
 

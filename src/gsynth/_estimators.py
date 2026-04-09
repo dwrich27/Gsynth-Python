@@ -192,32 +192,30 @@ def estimate_gsynth(
     factor loadings are recovered by projecting their pre-treatment
     outcomes onto the estimated factor space.
 
-    Bug fixes vs original:
-    - ``att_avg`` is now treatment-cell weighted (matches R ``sum(eff*D)/sum(D)``).
-    - ``att`` / ``att_time`` use relative **event-time** (0 = first treatment
-      period), not calendar time, and include pre-treatment periods.
-    - When ``force`` includes unit fixed effects the factor matrix is augmented
-      with a constant column so treated-unit FEs are estimated jointly with
-      loadings from pre-treatment data (matching R ``fect_nevertreated``).
+    ``Y`` is expected to be already demeaned and covariate-partialled
+    (i.e. ``Y_dem - X @ beta``).  Beta estimation is done upstream in
+    ``_core.py`` via ``partial_out_covariates``, which uses all D=0
+    observations matching R fect's behaviour.
 
     Parameters
     ----------
-    Y        : (N, T) demeaned/residualized outcome
+    Y        : (N, T) demeaned, covariate-partialled outcome
     D        : (N, T) treatment indicator
     ctrl_idx : indices of control units in Y
     treat_idx: indices of treated units in Y
     T0_vec   : pre-treatment period count per treated unit
     r        : number of factors
-    force    : fixed-effects specification (passed in to determine augmentation)
+    force    : fixed-effects specification (determines F augmentation)
 
     Returns
     -------
     dict with keys: F, Lambda, Y_ct, att, att_time, att_avg, residuals, mse
     """
     N, T = Y.shape
-    Y_ctrl = Y[ctrl_idx]                         # (N_co, T)
-    obs_ctrl = _nan_obs_mask(Y_ctrl)
 
+    Y_ctrl = Y[ctrl_idx]
+
+    obs_ctrl = _nan_obs_mask(Y_ctrl)
     F, Lambda_ctrl, resid_ctrl, mse = _ife_als(Y_ctrl, obs_ctrl, r, tol)
 
     # ---------------------------------------------------------------
@@ -270,9 +268,6 @@ def estimate_gsynth(
     if has_unit_fe:
         Y_ct += alpha_treat[:, None]                 # broadcast unit FEs
 
-    # ---------------------------------------------------------------
-    # FIX (Bugs 1 & 2): ATT by event-time; att_avg treatment-cell weighted
-    # ---------------------------------------------------------------
     att, att_time, att_avg = _compute_att_by_event_time(
         Y, Y_ct, D, treat_idx, T0_vec
     )
@@ -309,36 +304,63 @@ def estimate_ife(
     T0_vec: np.ndarray,
     r: int,
     tol: float = 1e-4,
+    X_mat: np.ndarray | None = None,
 ) -> dict:
     """
     Interactive Fixed Effects via EM / ALS on all pre-treatment observations.
 
     Treated units' pre-treatment data is used to estimate factors jointly.
-    Post-treatment counterfactuals are imputed from the estimated model.
-
-    FIX: att_avg is now treatment-cell weighted; att uses event-time.
+    When ``X_mat`` is provided, beta and factors are estimated jointly via
+    alternating least squares (matching R fect's iterative scheme).
     """
     N, T = Y.shape
+    K = X_mat.shape[2] if X_mat is not None else 0
 
-    # Pre-treatment mask: observed and not yet treated
-    pre_mask = np.zeros((N, T), dtype=bool)
-    for k, i in enumerate(treat_idx):
-        t0 = int(T0_vec[k])
-        pre_mask[i, :t0] = ~np.isnan(Y[i, :t0])
-    for i in ctrl_idx:
-        pre_mask[i] = ~np.isnan(Y[i])
+    # Pre-treatment observation mask (control all periods + treated pre-treat)
+    def _make_pre_mask(Y_use: np.ndarray) -> np.ndarray:
+        pre_mask = np.zeros((N, T), dtype=bool)
+        for k, i in enumerate(treat_idx):
+            t0 = int(T0_vec[k])
+            pre_mask[i, :t0] = ~np.isnan(Y_use[i, :t0])
+        for i in ctrl_idx:
+            pre_mask[i] = ~np.isnan(Y_use[i])
+        return pre_mask
 
-    F, Lambda, resid, mse = _ife_als(Y, pre_mask, r, tol)
+    # Joint β + factor estimation
+    beta_hat = np.zeros(K) if K > 0 else None
+
+    if K > 0:
+        obs_base = _make_pre_mask(Y)
+        for _ in range(50):
+            Y_minus_Xb = Y - (X_mat @ beta_hat)
+            pre_mask_b = _make_pre_mask(Y_minus_Xb)
+            F_iter, Lam_iter, _, _ = _ife_als(Y_minus_Xb, pre_mask_b, r, tol)
+            # β update: OLS from all D=0 residuals
+            resid_b = Y - Lam_iter @ F_iter.T
+            D0_mask = (D == 0) & ~np.isnan(Y)
+            y_vec = resid_b[D0_mask]
+            X_vec = X_mat.reshape(-1, K)[D0_mask.flatten()]
+            beta_new = np.linalg.lstsq(X_vec, y_vec, rcond=None)[0]
+            change = float(np.linalg.norm(beta_new - beta_hat))
+            beta_hat = beta_new
+            if change < tol:
+                break
+        Y_use = Y - (X_mat @ beta_hat)
+    else:
+        Y_use = Y
+
+    pre_mask = _make_pre_mask(Y_use)
+    F, Lambda, resid, mse = _ife_als(Y_use, pre_mask, r, tol)
 
     # Counterfactuals: Y_ct = Lambda @ F.T
     Y_ct = Lambda[treat_idx] @ F.T            # (N_tr, T)
 
-    # FIX (Bugs 1 & 2): event-time ATT, treatment-cell weighted avg
+    Y_for_att = (Y - (X_mat @ beta_hat)) if K > 0 else Y
     att, att_time, att_avg = _compute_att_by_event_time(
-        Y, Y_ct, D, treat_idx, T0_vec
+        Y_for_att, Y_ct, D, treat_idx, T0_vec
     )
 
-    return {
+    result = {
         "F": F,
         "Lambda": Lambda,
         "Lambda_ctrl": Lambda[ctrl_idx],
@@ -350,6 +372,9 @@ def estimate_ife(
         "residuals": resid,
         "mse": mse,
     }
+    if K > 0:
+        result["beta"] = beta_hat
+    return result
 
 
 # ---------------------------------------------------------------------------

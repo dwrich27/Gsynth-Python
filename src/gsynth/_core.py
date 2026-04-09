@@ -16,7 +16,7 @@ import pandas as pd
 
 from ._cv import build_lambda_seq, cv_factor_number, cv_factor_number_gsynth, cv_lambda
 from ._data import demean_panel, parse_panel, partial_out_covariates
-from ._estimators import estimate_gsynth, estimate_ife, estimate_mc
+from ._estimators import _ife_als, _nan_obs_mask, estimate_gsynth, estimate_ife, estimate_mc
 from ._inference import (
     jackknife_inference,
     nonparametric_bootstrap,
@@ -212,15 +212,18 @@ def gsynth(
             X_mat = X_mat / Y_scale
 
     # ------------------------------------------------------------------
-    # 3. Demean / partial out fixed effects
+    # 3. Initial demean (with β=0) — used for CV and ife/mc estimators
     # ------------------------------------------------------------------
     Y_dem, alpha_hat, xi_hat = demean_panel(Y_mat, D_mat, force, ctrl_idx)
 
     # ------------------------------------------------------------------
-    # 4. Partial out time-varying covariates
+    # 4. Partial out covariates (sequential, for ife/mc)
+    # For gsynth the sequential estimate is only used during CV; the final
+    # estimation uses a joint alternating loop (step 6).
     # ------------------------------------------------------------------
     beta_hat = None
-    if X_mat is not None and X_mat.shape[2] > 0:
+    K = X_mat.shape[2] if X_mat is not None else 0
+    if K > 0:
         Y_dem, beta_hat = partial_out_covariates(Y_dem, X_mat, D_mat, ctrl_idx)
 
     # ------------------------------------------------------------------
@@ -248,19 +251,12 @@ def gsynth(
     lam_opt      = None
     r_opt        = r_candidates[0]
 
-    if estimator == "gsynth":
+    if estimator in ("gsynth", "ife"):
+        # CV: k-fold on control cells (matching R fect)
         if CV and len(r_candidates) > 1:
-            r_opt, r_cv_scores = cv_factor_number_gsynth(
-                Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec,
-                r_candidates, force=force, tol=tol, rng=rng,
-            )
-        else:
-            r_opt = r_candidates[0]
-    elif estimator == "ife":
-        if CV and len(r_candidates) > 1:
-            Y_ctrl = Y_dem[ctrl_idx]
             r_opt, r_cv_scores = cv_factor_number(
-                Y_ctrl, r_candidates, k=k, criterion=criterion, tol=tol, rng=rng
+                Y_dem[ctrl_idx], r_candidates, k=k, criterion=criterion,
+                tol=tol, rng=rng,
             )
         else:
             r_opt = r_candidates[0]
@@ -282,11 +278,60 @@ def gsynth(
 
     # ------------------------------------------------------------------
     # 6. Final estimation
+    # For gsynth with covariates, use a joint alternating loop that
+    # iterates: demean(Y - X@β) → ALS factors → β update from D=0 residuals
+    # This matches R fect's iterative scheme where unit/time FEs and β are
+    # estimated jointly (the demean absorbs the correct X@β before FEs).
     # ------------------------------------------------------------------
-    if estimator == "gsynth":
-        est = estimate_gsynth(Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec, r_opt, tol, force)
+    if estimator == "gsynth" and K > 0:
+        beta_hat = np.zeros(K)
+        N_full = Y_mat.shape[0]
+        D0_mask = (D_mat == 0) & ~np.isnan(Y_mat)
+        for _outer in range(50):
+            # (a) Demean Y - X@β to get updated alpha, xi
+            Y_adj = Y_mat - (X_mat @ beta_hat)
+            Y_dem, alpha_hat, xi_hat = demean_panel(Y_adj, D_mat, force, ctrl_idx)
+            # (b) ALS on demeaned ctrl units with r_opt factors
+            obs_ctrl_j = _nan_obs_mask(Y_dem[ctrl_idx])
+            F_j, Lam_ctrl_j, _, _ = _ife_als(Y_dem[ctrl_idx], obs_ctrl_j, r_opt, tol)
+            # (c) Build full-panel Λ (project treated pre-treatment for β update)
+            Lam_full_j = np.zeros((N_full, max(r_opt, 1)))
+            if r_opt > 0:
+                Lam_full_j[ctrl_idx] = Lam_ctrl_j
+                for _k, _i in enumerate(treat_idx):
+                    _t0 = int(T0_vec[_k])
+                    if _t0 >= r_opt:
+                        _Fp = F_j[:_t0]
+                        _Yp = Y_dem[_i, :_t0]
+                        _op = ~np.isnan(_Yp)
+                        if _op.sum() >= r_opt:
+                            Lam_full_j[_i, :r_opt] = np.linalg.lstsq(
+                                _Fp[_op], _Yp[_op], rcond=None
+                            )[0]
+            # (d) β from D=0 residuals: Y - alpha(β) - xi(β) - Λ@F'
+            #     = (Y_dem + X@β) - Λ@F'
+            fitted_j = Lam_full_j[:, :r_opt] @ F_j.T if r_opt > 0 else np.zeros_like(Y_mat)
+            lhs_j = (Y_dem + (X_mat @ beta_hat)) - fitted_j
+            y_b = lhs_j[D0_mask]
+            X_b = X_mat.reshape(-1, K)[D0_mask.flatten()]
+            beta_new = np.linalg.lstsq(X_b, y_b, rcond=None)[0]
+            change = float(np.linalg.norm(beta_new - beta_hat))
+            beta_hat = beta_new
+            if change < tol:
+                break
+        # Final Y_dem is already updated to Y - X@β - alpha(β) - xi(β)
+        est = estimate_gsynth(
+            Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec, r_opt, tol, force,
+        )
+    elif estimator == "gsynth":
+        est = estimate_gsynth(
+            Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec, r_opt, tol, force,
+        )
     elif estimator == "ife":
-        est = estimate_ife(Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec, r_opt, tol)
+        est = estimate_ife(
+            Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec, r_opt, tol,
+            X_mat=None,
+        )
     else:  # mc
         est = estimate_mc(Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec, lam_opt, tol)
         r_opt = est.get("r", 0)
