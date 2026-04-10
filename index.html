@@ -515,10 +515,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#citation" class="md-nav__link">
+  <a href="#credits-and-citation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Citation
+        Credits and Citation
       
     </span>
   </a>
@@ -1344,10 +1344,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#citation" class="md-nav__link">
+  <a href="#credits-and-citation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Citation
+        Credits and Citation
       
     </span>
   </a>
@@ -1386,7 +1386,11 @@
 
 
 <h1 id="gsynth-generalized-synthetic-control-for-python">gsynth — Generalized Synthetic Control for Python<a class="headerlink" href="#gsynth-generalized-synthetic-control-for-python" title="Permanent link">&para;</a></h1>
-<p><strong>gsynth</strong> is a pure-NumPy Python port of the R <code>gsynth</code> package. It estimates causal effects in panel data settings using Generalized Synthetic Control methods — combining the intuition of synthetic control with the flexibility of interactive fixed effects (IFE) models.</p>
+<div class="admonition note">
+<p class="admonition-title">Credit where it's due</p>
+<p>This package is a Python port of the <a href="https://yiqingxu.org/packages/gsynth/"><code>gsynth</code></a> and <a href="https://yiqingxu.org/packages/fect/"><code>fect</code></a> R packages by <strong><a href="https://yiqingxu.org/">Yiqing Xu</a></strong> (Stanford) and collaborators. The methodology, estimation algorithm, and validation benchmarks are entirely his work. If this package is useful to you, please cite the original papers below and consider using his R packages directly — they are more mature, better tested, and actively maintained. This Python port exists to make the method accessible to Python-first workflows.</p>
+</div>
+<p><strong>gsynth</strong> estimates causal effects in panel data settings using Generalized Synthetic Control methods — combining the intuition of synthetic control with the flexibility of interactive fixed effects (IFE) models.</p>
 <hr />
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">pip</span> <span class="n">install</span> <span class="n">git</span><span class="o">+</span><span class="n">https</span><span class="p">:</span><span class="o">//</span><span class="n">github</span><span class="o">.</span><span class="n">com</span><span class="o">/</span><span class="n">dwrich27</span><span class="o">/</span><span class="n">Gsynth</span><span class="o">-</span><span class="n">Python</span><span class="o">.</span><span class="n">git</span>
@@ -1552,11 +1556,18 @@
 <li><a href="user-guide/effect-summary/">Effect Summary</a> — the <code>effect()</code> function</li>
 </ul>
 <hr />
-<h2 id="citation">Citation<a class="headerlink" href="#citation" title="Permanent link">&para;</a></h2>
-<p>If you use gsynth in published research, please cite the original methodology paper:</p>
+<h2 id="credits-and-citation">Credits and Citation<a class="headerlink" href="#credits-and-citation" title="Permanent link">&para;</a></h2>
+<p>This Python package implements the methods developed by <strong>Yiqing Xu</strong> (Stanford University) and collaborators. The methodology, algorithms, and the R reference implementations (<a href="https://yiqingxu.org/packages/gsynth/"><code>gsynth</code></a>, <a href="https://yiqingxu.org/packages/fect/"><code>fect</code></a>) are entirely their work.</p>
+<p>If you use this package in published research, <strong>please cite the original papers</strong>:</p>
+<p><strong>Core GSC methodology:</strong></p>
 <blockquote>
 <p>Xu, Y. (2017). Generalized Synthetic Control Method: Causal Inference with Interactive Fixed Effects Models. <em>Political Analysis</em>, 25(1), 57–76. doi:<a href="https://doi.org/10.1017/pan.2016.2">10.1017/pan.2016.2</a></p>
 </blockquote>
+<p><strong>Panel estimation with staggered treatment and covariates (fect):</strong></p>
+<blockquote>
+<p>Liu, L., Wang, Y., &amp; Xu, Y. (2024). A Practical Guide to Counterfactual Estimators for Causal Inference with Time-Series Cross-Sectional Data. <em>American Journal of Political Science</em>, 68(1), 160–176. doi:<a href="https://doi.org/10.1111/ajps.12723">10.1111/ajps.12723</a></p>
+</blockquote>
+<p>Yiqing Xu's work has made rigorous causal inference with panel data dramatically more accessible. His R packages remain the authoritative implementations — use them if you can.</p>
 <hr />
 <h2 id="tutorials">Tutorials<a class="headerlink" href="#tutorials" title="Permanent link">&para;</a></h2>
 <ul>
