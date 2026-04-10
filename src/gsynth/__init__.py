@@ -1,7 +1,14 @@
 """
 gsynth — Generalized Synthetic Control Method in pure NumPy.
 
-A Python port of the R ``gsynth`` package by Yiqing Xu (2017).
+A Python port of the R ``gsynth`` and ``fect`` packages by Yiqing Xu
+(Stanford) and collaborators.  The methodology and algorithms are entirely
+their work; this package exists to make the method accessible in Python-first
+workflows.  Please cite the original papers in any published research:
+
+  Xu, Y. (2017). Generalized Synthetic Control Method. Political Analysis.
+  Liu, L., Wang, Y., & Xu, Y. (2024). A Practical Guide to Counterfactual
+      Estimators for Causal Inference with TSCS Data. AJPS.
 
 Quick start
 -----------

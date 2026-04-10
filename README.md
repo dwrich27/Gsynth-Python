@@ -1,6 +1,8 @@
 # gsynth — Generalized Synthetic Control Method (Python)
 
-A pure-NumPy Python port of the R [`gsynth`](https://yiqingxu.org/packages/gsynth/) package by Yiqing Xu (2017).
+A pure-NumPy Python port of the R [`gsynth`](https://yiqingxu.org/packages/gsynth/) and [`fect`](https://yiqingxu.org/packages/fect/) packages by **[Yiqing Xu](https://yiqingxu.org/)** (Stanford) and collaborators.
+
+> **Credit:** The methodology, estimation algorithms, and validation benchmarks in this package are entirely the work of Yiqing Xu and co-authors. This port exists to make the method accessible in Python-first workflows. If you can use R, the original packages are more mature and actively maintained. If you use this package in research, please cite the papers below.
 
 Estimates counterfactual outcomes and average treatment effects on the treated (ATT) for panel data using **Interactive Fixed Effects (IFE)** and **Matrix Completion (MC)** models.
 
@@ -192,8 +194,17 @@ where **α_i** are unit fixed effects, **ξ_t** are time fixed effects, **λ_i**
 
 ---
 
-## Reference
+## References
 
+Please cite the original methodology papers when using this package in research:
+
+**Core GSC methodology:**
 Xu, Y. (2017). Generalized Synthetic Control Method: Causal Inference with
 Interactive Fixed Effects Models. *Political Analysis*, 25(1), 57–76.
 [doi:10.1017/pan.2016.2](https://doi.org/10.1017/pan.2016.2)
+
+**Panel estimation with staggered treatment and covariates:**
+Liu, L., Wang, Y., & Xu, Y. (2024). A Practical Guide to Counterfactual
+Estimators for Causal Inference with Time-Series Cross-Sectional Data.
+*American Journal of Political Science*, 68(1), 160–176.
+[doi:10.1111/ajps.12723](https://doi.org/10.1111/ajps.12723)

@@ -1,6 +1,9 @@
 # gsynth — Generalized Synthetic Control for Python
 
-**gsynth** is a pure-NumPy Python port of the R `gsynth` package. It estimates causal effects in panel data settings using Generalized Synthetic Control methods — combining the intuition of synthetic control with the flexibility of interactive fixed effects (IFE) models.
+!!! note "Credit where it's due"
+    This package is a Python port of the [`gsynth`](https://yiqingxu.org/packages/gsynth/) and [`fect`](https://yiqingxu.org/packages/fect/) R packages by **[Yiqing Xu](https://yiqingxu.org/)** (Stanford) and collaborators. The methodology, estimation algorithm, and validation benchmarks are entirely his work. If this package is useful to you, please cite the original papers below and consider using his R packages directly — they are more mature, better tested, and actively maintained. This Python port exists to make the method accessible to Python-first workflows.
+
+**gsynth** estimates causal effects in panel data settings using Generalized Synthetic Control methods — combining the intuition of synthetic control with the flexibility of interactive fixed effects (IFE) models.
 
 ---
 
@@ -119,11 +122,19 @@ The counterfactual Y(0) for treated units is imputed as `alpha_i + lambda_i_hat 
 
 ---
 
-## Citation
+## Credits and Citation
 
-If you use gsynth in published research, please cite the original methodology paper:
+This Python package implements the methods developed by **Yiqing Xu** (Stanford University) and collaborators. The methodology, algorithms, and the R reference implementations ([`gsynth`](https://yiqingxu.org/packages/gsynth/), [`fect`](https://yiqingxu.org/packages/fect/)) are entirely their work.
 
+If you use this package in published research, **please cite the original papers**:
+
+**Core GSC methodology:**
 > Xu, Y. (2017). Generalized Synthetic Control Method: Causal Inference with Interactive Fixed Effects Models. *Political Analysis*, 25(1), 57–76. doi:[10.1017/pan.2016.2](https://doi.org/10.1017/pan.2016.2)
+
+**Panel estimation with staggered treatment and covariates (fect):**
+> Liu, L., Wang, Y., & Xu, Y. (2024). A Practical Guide to Counterfactual Estimators for Causal Inference with Time-Series Cross-Sectional Data. *American Journal of Political Science*, 68(1), 160–176. doi:[10.1111/ajps.12723](https://doi.org/10.1111/ajps.12723)
+
+Yiqing Xu's work has made rigorous causal inference with panel data dramatically more accessible. His R packages remain the authoritative implementations — use them if you can.
 
 ---
 
