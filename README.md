@@ -39,7 +39,7 @@ pip install .
 
 ## Example
 
-![Counterfactual plot](docs/assets/counterfactual_example.png)
+![Counterfactual plot](https://raw.githubusercontent.com/dwrich27/Gsynth-Python/main/docs/assets/counterfactual_example.png)
 
 *Actual vs. counterfactual outcomes for treated units (average ± IQR across units). Dark blue = observed; dashed blue = imputed Y(0). Post-treatment region shaded. ATT annotated.*
 
