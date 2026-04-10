@@ -42,12 +42,14 @@ from ._core import gsynth
 from ._effect import effect
 from ._plots import plot
 from ._result import GsynthResult
+from .data import load_turnout
 
 __all__ = [
     "gsynth",
     "GsynthResult",
     "plot",
     "effect",
+    "load_turnout",
 ]
 
 __version__ = "0.2.0"

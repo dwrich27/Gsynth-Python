@@ -45,6 +45,9 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"gsynth.data" = ["*.csv"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py39"

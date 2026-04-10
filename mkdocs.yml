@@ -61,6 +61,7 @@ nav:
     - Effect Summary: user-guide/effect-summary.md
   - Tutorials:
     - Quick Start: tutorials/quickstart.md
+    - Voter Turnout (Xu 2017): tutorials/turnout.md
     - Political Economy Example: tutorials/election.md
     - Staggered Adoption: tutorials/staggered.md
   - API Reference:

@@ -251,8 +251,19 @@ def gsynth(
     lam_opt      = None
     r_opt        = r_candidates[0]
 
-    if estimator in ("gsynth", "ife"):
-        # CV: k-fold on control cells (matching R fect)
+    if estimator == "gsynth":
+        # CV: LOO on treated pre-treatment observations (matching R gsynth/fect).
+        # Validated against the R turnout example: selects r=2 matching R.
+        # k-fold on control cells was tested but over-selects r on real data.
+        if CV and len(r_candidates) > 1:
+            r_opt, r_cv_scores = cv_factor_number_gsynth(
+                Y_dem, D_mat, ctrl_idx, treat_idx, T0_vec,
+                r_candidates, force=force, tol=tol, rng=rng,
+            )
+        else:
+            r_opt = r_candidates[0]
+    elif estimator == "ife":
+        # CV: k-fold on control cells (ife uses all pre-treatment data jointly)
         if CV and len(r_candidates) > 1:
             r_opt, r_cv_scores = cv_factor_number(
                 Y_dem[ctrl_idx], r_candidates, k=k, criterion=criterion,
