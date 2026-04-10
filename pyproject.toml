@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gsynth"
-version = "0.1.0"
+version = "0.2.0"
 description = "Generalized Synthetic Control Method — pure-NumPy Python port of the R gsynth package"
 readme = "README.md"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 requires-python = ">=3.9"
-authors = [{ name = "dwrich27" }]
+authors = [{ name = "dwrich27", email = "dwrich27@users.noreply.github.com" }]
 keywords = ["causal-inference", "synthetic-control", "panel-data", "econometrics"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -27,6 +27,12 @@ dependencies = [
     "pandas>=1.5",
     "matplotlib>=3.6",
 ]
+
+[project.urls]
+Homepage = "https://dwrich27.github.io/Gsynth-Python/"
+Repository = "https://github.com/dwrich27/Gsynth-Python"
+"Bug Tracker" = "https://github.com/dwrich27/Gsynth-Python/issues"
+Changelog = "https://dwrich27.github.io/Gsynth-Python/changelog/"
 
 [project.optional-dependencies]
 dev = [
