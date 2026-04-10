@@ -194,6 +194,12 @@ where **α_i** are unit fixed effects, **ξ_t** are time fixed effects, **λ_i**
 
 ---
 
+## Development
+
+This package was built using [StatsClaw](https://github.com/statsclaw/statsclaw), an AI-collaborative workflow framework for statistical software development by Tianzhu Qin and Yiqing Xu. StatsClaw coordinates teams of AI agents (via Claude Code) through planning, implementation, testing, and documentation — with the researcher guiding decisions throughout.
+
+---
+
 ## References
 
 Please cite the original methodology papers when using this package in research:
@@ -208,3 +214,8 @@ Liu, L., Wang, Y., & Xu, Y. (2024). A Practical Guide to Counterfactual
 Estimators for Causal Inference with Time-Series Cross-Sectional Data.
 *American Journal of Political Science*, 68(1), 160–176.
 [doi:10.1111/ajps.12723](https://doi.org/10.1111/ajps.12723)
+
+**Development workflow:**
+Qin, T. & Xu, Y. (2026). StatsClaw: An AI-Collaborative Workflow for
+Statistical Software Development. Mimeo, Stanford University.
+[https://bit.ly/statsclaw](https://bit.ly/statsclaw)

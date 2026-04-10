@@ -136,6 +136,11 @@ If you use this package in published research, **please cite the original papers
 
 Yiqing Xu's work has made rigorous causal inference with panel data dramatically more accessible. His R packages remain the authoritative implementations — use them if you can.
 
+**Development workflow:**
+> Qin, T. & Xu, Y. (2026). StatsClaw: An AI-Collaborative Workflow for Statistical Software Development. Mimeo, Stanford University. [https://bit.ly/statsclaw](https://bit.ly/statsclaw)
+
+This package was built using [StatsClaw](https://github.com/statsclaw/statsclaw), an AI-collaborative framework that coordinates teams of AI agents (via Claude Code) through planning, implementation, testing, and documentation.
+
 ---
 
 ## Tutorials
